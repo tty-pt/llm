@@ -1,0 +1,2 @@
+#!/bin/sh
+$HOME/llm/.venv/bin/huggingface-cli $@
