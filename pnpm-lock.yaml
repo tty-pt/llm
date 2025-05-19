@@ -1,0 +1,72 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      '@tty-pt/mk':
+        specifier: ^0.0.1
+        version: 0.0.1
+      '@tty-pt/ndc':
+        specifier: ^0.9.5
+        version: 0.9.5(@tty-pt/qdb@0.0.14)(@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0))(@xterm/addon-web-links@0.11.0(@xterm/xterm@5.5.0))(@xterm/xterm@5.5.0)
+      '@tty-pt/qdb':
+        specifier: ^0.0.14
+        version: 0.0.14
+
+packages:
+
+  '@tty-pt/mk@0.0.1':
+    resolution: {integrity: sha512-0mttCm5t4LmSmmh1AJL09011iLvodGycIJzYy1KM6XNSjKZWVlqlkm/caT6c2eoXZok6EkATGH8L/Y3bMrBrTQ==}
+
+  '@tty-pt/ndc@0.9.5':
+    resolution: {integrity: sha512-l0NF0VxhrkZw+zUB65Yr/hyj9eQhRNx/W+MpW3TY9Wdd129sAQTfY2aSi6ffK6jOdu/SFOaDJeCeAtzp+pQNHA==}
+    hasBin: true
+    peerDependencies:
+      '@tty-pt/qdb': ^0.0.14
+      '@xterm/addon-fit': ^0.10.0
+      '@xterm/addon-web-links': ^0.11.0
+      '@xterm/xterm': ^5.5.0
+
+  '@tty-pt/qdb@0.0.14':
+    resolution: {integrity: sha512-VDTWsPUf4sj0JRYc+wDL67TalfHt/1g8B8fkZ+Gzpq1hQkLBxZFJWPk8atJ9CGjMT5hPsXd+oWNeG19LFs+x5A==}
+
+  '@xterm/addon-fit@0.10.0':
+    resolution: {integrity: sha512-UFYkDm4HUahf2lnEyHvio51TNGiLK66mqP2JoATy7hRZeXaGMRDr00JiSF7m63vR5WKATF605yEggJKsw0JpMQ==}
+    peerDependencies:
+      '@xterm/xterm': ^5.0.0
+
+  '@xterm/addon-web-links@0.11.0':
+    resolution: {integrity: sha512-nIHQ38pQI+a5kXnRaTgwqSHnX7KE6+4SVoceompgHL26unAxdfP6IPqUTSYPQgSwM56hsElfoNrrW5V7BUED/Q==}
+    peerDependencies:
+      '@xterm/xterm': ^5.0.0
+
+  '@xterm/xterm@5.5.0':
+    resolution: {integrity: sha512-hqJHYaQb5OptNunnyAnkHyM8aCjZ1MEIDTQu1iIbbTD/xops91NB5yq1ZK/dC2JDbVWtF23zUtl9JE2NqwT87A==}
+
+snapshots:
+
+  '@tty-pt/mk@0.0.1': {}
+
+  '@tty-pt/ndc@0.9.5(@tty-pt/qdb@0.0.14)(@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0))(@xterm/addon-web-links@0.11.0(@xterm/xterm@5.5.0))(@xterm/xterm@5.5.0)':
+    dependencies:
+      '@tty-pt/qdb': 0.0.14
+      '@xterm/addon-fit': 0.10.0(@xterm/xterm@5.5.0)
+      '@xterm/addon-web-links': 0.11.0(@xterm/xterm@5.5.0)
+      '@xterm/xterm': 5.5.0
+
+  '@tty-pt/qdb@0.0.14': {}
+
+  '@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0)':
+    dependencies:
+      '@xterm/xterm': 5.5.0
+
+  '@xterm/addon-web-links@0.11.0(@xterm/xterm@5.5.0)':
+    dependencies:
+      '@xterm/xterm': 5.5.0
+
+  '@xterm/xterm@5.5.0': {}

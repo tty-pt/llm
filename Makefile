@@ -1,6 +1,18 @@
-libdir := /usr/local
-LDFLAGS := ${libdir:%=-L%/lib} ${libdir:%=-Wl,-rpath,%/lib}
-dm_daemon2: dm_daemon2.c
-	${CC} dm_daemon2.c -o $@ -g -pthread -ldl /usr/local/lib/libllama.so ${LDFLAGS}
-dm_daemon: dm_daemon.c
-	${CC} dm_daemon.c -o $@ -pthread -ldl /usr/local/lib/libllama.so ${LDFLAGS}
+npm-lib := @tty-pt/qdb @tty-pt/ndc
+
+-include node_modules/@tty-pt/mk/include.mk
+
+all: bin/llm-askd bin/llm-ask
+
+FLAGS := ${LDFLAGS} ${CFLAGS}
+
+bin/llm-askd: src/llm-askd.c
+	${CC} src/llm-askd.c -o $@ -lllama -lqdb -lndc ${FLAGS}
+
+bin/llm-ask: src/llm-ask.c
+	${CC} src/llm-ask.c -o $@ ${FLAGS}
+
+clean:
+	rm bin/llm-ask bin/llm-askd 2>/dev/null || true
+
+.PHONY: clean
