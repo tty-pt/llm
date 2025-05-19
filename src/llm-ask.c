@@ -45,8 +45,7 @@ int main(int argc, char *argv[]) {
         response[n] = '\0';
 	char *end = strstr(response, END_TAG);
         if (end) {
-		*end = '\n';
-		*++end = '\0';
+		*end = '\0';
 		fputs(response, stdout);
 		break;
 	}

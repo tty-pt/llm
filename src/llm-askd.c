@@ -23,6 +23,8 @@ char output[64 * MAX_TOKENS], *o;
 llama_token tokens[MAX_TOKENS];
 int n_tokens = 0;
 
+static llama_seq_id seq_ids[MAX_TOKENS * 10];
+
 int pos;
 
 void quiet_logger(enum ggml_log_level level __attribute__((unused)), const char * text __attribute__((unused)), void * user_data __attribute__((unused))) {
@@ -63,9 +65,21 @@ setup(const char * model_path) {
     vocab = llama_model_get_vocab(model);
 }
 
+static inline void
+memorize(void) {
+    if (memory_len + n_tokens > MAX_TOKENS * 10) {
+        int excess = memory_len + n_tokens - MAX_TOKENS * 10;
+        memmove(memory, memory + excess, sizeof(llama_token) * (memory_len - excess));
+        memory_len -= excess;
+    }
+
+    memcpy(memory + memory_len, tokens, sizeof(llama_token) * n_tokens);
+    memory_len += n_tokens;
+}
+
 static inline int
 inference(void) {
-	llama_token tok = llama_sampler_sample(sampler, ctx, -1);
+	llama_token tok = tokens[0] = llama_sampler_sample(sampler, ctx, -1);
 	llama_sampler_accept(sampler, tok);
 
 	if (tok == llama_vocab_fim_suf(vocab) ||
@@ -80,7 +94,7 @@ inference(void) {
 
 	char buf[64];
 	memset(buf, 0, sizeof(buf));
-	llama_token_to_piece(vocab, tok, buf, sizeof(buf), 0, true);
+	llama_token_to_piece(vocab, tok, buf, sizeof(buf), 0, false);
 	o += snprintf(o, sizeof(output) - (o - output), "%s", buf);
 
 	if (!strcmp(o - 10, END)) {
@@ -96,6 +110,9 @@ inference(void) {
 	b.seq_id[0] = malloc(sizeof(llama_seq_id));
 	b.seq_id[0][0] = 0;
 	b.logits[0] = 1;
+
+	n_tokens = 1;
+	memorize();
 
 	if (llama_decode(ctx, b) != 0) {
 		fprintf(stderr, "\nDecode failed\n");
@@ -120,18 +137,6 @@ tokenize(int fd, const char *prompt) {
 }
 
 static inline void
-memorize(void) {
-    if (memory_len + n_tokens > MAX_TOKENS * 10) {
-        int excess = memory_len + n_tokens - MAX_TOKENS * 10;
-        memmove(memory, memory + excess, sizeof(llama_token) * (memory_len - excess));
-        memory_len -= excess;
-    }
-
-    memcpy(memory + memory_len, tokens, sizeof(llama_token) * n_tokens);
-    memory_len += n_tokens;
-}
-
-static inline void
 commit(int fd, const char *prompt) {
 	tokenize(fd, prompt);
 	memorize();
@@ -141,17 +146,17 @@ void generate(int fd, const char * prompt) {
     int i;
     o = output;
 
-    llama_kv_self_clear(ctx);
+    /* llama_kv_self_clear(ctx); */
     memset(tokens, 0, sizeof(llama_token) * MAX_TOKENS);
 
     commit(fd, prompt);
 
-    struct llama_batch batch = llama_batch_init(memory_len, 0, 1);
-    batch.n_tokens = memory_len;
+    struct llama_batch batch = llama_batch_init(n_tokens, 0, 1);
+    batch.n_tokens = n_tokens;
 
-    for (i = 0; i < memory_len; ++i) {
-        batch.token[i] = memory[i];
-        batch.pos[i] = i;
+    for (i = 0; i < n_tokens; ++i) {
+        batch.token[i] = tokens[i];
+        batch.pos[i] = pos++;
         batch.n_seq_id[i] = 1;
         batch.seq_id[i] = malloc(sizeof(llama_seq_id));
         batch.seq_id[i][0] = 0;
@@ -171,22 +176,19 @@ void generate(int fd, const char * prompt) {
 	    ;
 
     llama_batch_free(batch);
+
+    snprintf(o, sizeof(output) - (o - output), END"\n");
+    commit(fd, o);
+
     o = output;
     while (*o == ' ')
 	    o++;
     ndc_writef(fd, "%s", o);
-
-    commit(fd, output);
-
-    prompt = "<|im_end|>\n";
-    memset(tokens, 0, sizeof(llama_token) * MAX_TOKENS);
-
-    commit(fd, prompt);
 }
 
 void do_ASK(int fd, int argc, char *argv[]) {
 	char buf[BUFSIZ * 2], *b = buf;
-	b += snprintf(b, sizeof(buf) - (b - buf), "<|im_start|>user\n");
+	b += snprintf(b, sizeof(buf) - (b - buf), "<|im_start|>user \n");
 	for (int i = 0; i < argc; i++) {
 		int ret = snprintf(b, sizeof(buf) - (b - buf), "%s", argv[i]);
 		if (ret < 0) {
@@ -195,7 +197,7 @@ void do_ASK(int fd, int argc, char *argv[]) {
 		}
 		b += ret;
 	}
-	b += snprintf(b, sizeof(buf) - (b - buf), "<|im_end|>\n<|im_start|>assistant\n");
+	b += snprintf(b, sizeof(buf) - (b - buf), "<|im_end|>\n<|im_start|>assistant\n ");
 	generate(fd, buf);
 	ndc_writef(fd, "<|im_end|>\n");
 }
