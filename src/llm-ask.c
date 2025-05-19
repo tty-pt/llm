@@ -7,15 +7,27 @@
 
 #define PORT 4242
 #define BUF_SIZE 4096
-#define END_TAG "<|im_end|>"
+#define END_TAG "<|im_"
 
 int main(int argc, char *argv[]) {
+    char prompt[BUFSIZ * 2], *p = prompt;
+
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <prompt>\n", argv[0]);
         return 1;
     }
 
-    const char *prompt = argv[1];
+    p += snprintf(p, sizeof(prompt) - (p - prompt), "ask" );
+
+    for (int i = 1; i < argc; i++) {
+	    int ret = snprintf(p, sizeof(prompt) - (p - prompt),
+			    " %s" , argv[i]);
+
+	    if (ret <= 0)
+		    break;
+
+	    p += ret;
+    }
 
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
@@ -35,9 +47,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    char request[BUF_SIZE];
-    snprintf(request, sizeof(request), "ask %s\n", prompt);
-    send(sock, request, strlen(request), 0);
+    send(sock, prompt, p - prompt + 1, 0);
 
     char response[BUF_SIZE];
     ssize_t n;
@@ -45,8 +55,8 @@ int main(int argc, char *argv[]) {
         response[n] = '\0';
 	char *end = strstr(response, END_TAG);
         if (end) {
-		*end = '\n';
-		*++end = '\0';
+		*end++ = '\n';
+		*end = '\0';
 		fputs(response, stdout);
 		break;
 	}
