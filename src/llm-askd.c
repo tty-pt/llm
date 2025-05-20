@@ -39,62 +39,62 @@ typedef struct fd_info {
 fdi_t fdis[FD_SETSIZE], general;
 
 void quiet_logger(enum ggml_log_level level __attribute__((unused)), const char * text __attribute__((unused)), void * user_data __attribute__((unused))) {
-    // Do nothing
+	// Do nothing
 }
 
 static inline void
 fdi_init(fdi_t *fdi) {
-    fdi->ctx = llama_init_from_model(model, ctx_params);
-    if (!fdi->ctx) {
-        fprintf(stderr, "Failed to init context\n");
-        exit(1);
-    }
-    llama_kv_self_clear(fdi->ctx);
-    fdi->pos = 0;
+	fdi->ctx = llama_init_from_model(model, ctx_params);
+	if (!fdi->ctx) {
+		fprintf(stderr, "Failed to init context\n");
+		exit(1);
+	}
+	llama_kv_self_clear(fdi->ctx);
+	fdi->pos = 0;
 }
 
 static inline void
 setup(const char * model_path) {
-    llama_log_set(quiet_logger, NULL);
-    llama_backend_init();
+	llama_log_set(quiet_logger, NULL);
+	llama_backend_init();
 
-    struct llama_model_params model_params = llama_model_default_params();
-    model = llama_model_load_from_file(model_path, model_params);
-    if (!model) {
-        fprintf(stderr, "Failed to load model\n");
-        exit(1);
-    }
+	struct llama_model_params model_params = llama_model_default_params();
+	model = llama_model_load_from_file(model_path, model_params);
+	if (!model) {
+		fprintf(stderr, "Failed to load model\n");
+		exit(1);
+	}
 
-    ctx_params = llama_context_default_params();
-    ctx_params.n_ctx = MAX_MEMORY;
-    ctx_params.n_batch = MAX_TOKENS;
-    ctx_params.n_seq_max = 4;
-    ctx_params.n_threads = sysconf(_SC_NPROCESSORS_ONLN);
+	ctx_params = llama_context_default_params();
+	ctx_params.n_ctx = MAX_MEMORY;
+	ctx_params.n_batch = MAX_TOKENS;
+	ctx_params.n_seq_max = 4;
+	ctx_params.n_threads = sysconf(_SC_NPROCESSORS_ONLN);
 
-    fdi_init(&general);
+	fdi_init(&general);
 
-    struct llama_sampler_chain_params chain_params = llama_sampler_chain_default_params();
-    sampler = llama_sampler_chain_init(chain_params);
-    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40));
+	struct llama_sampler_chain_params chain_params = llama_sampler_chain_default_params();
+	sampler = llama_sampler_chain_init(chain_params);
+	llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40));
 
-    llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.9, 1));
-    llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.7));
-    llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
+	llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.9, 1));
+	llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.7));
+	llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
 
-    vocab = llama_model_get_vocab(model);
-    start_n = llama_tokenize(vocab, start, strlen(start), start_tk, 4, true, true);
-    end_n = llama_tokenize(vocab, end, strlen(end), end_tk, 4, true, true);
+	vocab = llama_model_get_vocab(model);
+	start_n = llama_tokenize(vocab, start, strlen(start), start_tk, 4, true, true);
+	end_n = llama_tokenize(vocab, end, strlen(end), end_tk, 4, true, true);
 }
 
 static inline int
 tk_mem(int pos, size_t n) {
-    if (pos + n > MAX_MEMORY) {
-        int excess = pos + n - MAX_MEMORY;
-        pos -= excess;
-    }
+	if (pos + n > MAX_MEMORY) {
+		int excess = pos + n - MAX_MEMORY;
+		pos -= excess;
+	}
 
-    pos += n;
-    return pos;
+	pos += n;
+	return pos;
 }
 
 static inline int
@@ -143,55 +143,55 @@ inference(fdi_t *fdi, int pos) {
 
 static inline int
 tokenize(int fd, const char *prompt) {
-    n_tokens = llama_tokenize(vocab, prompt, strlen(prompt), tokens, MAX_TOKENS, true, true);
+	n_tokens = llama_tokenize(vocab, prompt, strlen(prompt), tokens, MAX_TOKENS, true, true);
 
-    if (n_tokens < 1) {
-	    ndc_writef(fd, "Tokenization failed\n");
-	    exit(1);
-    }
+	if (n_tokens < 1) {
+		ndc_writef(fd, "Tokenization failed\n");
+		exit(1);
+	}
 
-    return n_tokens;
+	return n_tokens;
 }
 
 void generate(int fd, const char * prompt) {
-    fdi_t *fdi = &fdis[fd];
-    int *pos_r = fdi->ctx == general.ctx ? &general.pos : &fdi->pos;
-    int pos = *pos_r;
-    int i;
-    o = output;
+	fdi_t *fdi = &fdis[fd];
+	int *pos_r = fdi->ctx == general.ctx ? &general.pos : &fdi->pos;
+	int pos = *pos_r;
+	int i;
+	o = output;
 
-    tokenize(fd, prompt);
-    tk_mem(pos, n_tokens);
+	tokenize(fd, prompt);
+	tk_mem(pos, n_tokens);
 
-    struct llama_batch batch = llama_batch_init(n_tokens, 0, 1);
-    batch.n_tokens = n_tokens;
+	struct llama_batch batch = llama_batch_init(n_tokens, 0, 1);
+	batch.n_tokens = n_tokens;
 
-    for (i = 0; i < n_tokens; ++i) {
-        batch.token[i] = tokens[i];
-        batch.pos[i] = pos++;
-        batch.n_seq_id[i] = 1;
-        batch.seq_id[i] = &seq_ids[i];
-        batch.seq_id[i][0] = 0;
-    }
-    batch.logits[i - 1] = 1;
+	for (i = 0; i < n_tokens; ++i) {
+		batch.token[i] = tokens[i];
+		batch.pos[i] = pos++;
+		batch.n_seq_id[i] = 1;
+		batch.seq_id[i] = &seq_ids[i];
+		batch.seq_id[i][0] = 0;
+	}
+	batch.logits[i - 1] = 1;
 
-    if (llama_decode(fdi->ctx, batch) != 0) {
-        fprintf(stderr, "Failed to decode prompt\n");
-	return;
-    }
+	if (llama_decode(fdi->ctx, batch) != 0) {
+		fprintf(stderr, "Failed to decode prompt\n");
+		return;
+	}
 
-    int max_gen = MAX_TOKENS;
+	int max_gen = MAX_TOKENS;
 
-    for (int step = 0; step < max_gen && inference(fdi, pos); ++step)
-	    pos++;
+	for (int step = 0; step < max_gen && inference(fdi, pos); ++step)
+		pos++;
 
-    snprintf(o, sizeof(output) - (o - output), "%s\n", end);
+	snprintf(o, sizeof(output) - (o - output), "%s\n", end);
 
-    o = output;
-    while (*o == ' ')
-	    o++;
+	o = output;
+	while (*o == ' ')
+		o++;
 
-    *pos_r = pos;
+	*pos_r = pos;
 }
 
 void do_ASK(int fd, int argc, char *argv[]) {
@@ -265,8 +265,7 @@ main(int argc, char *argv[])
 	};
 	register char c;
 
-	while ((c = getopt(argc, argv, "?dK:k:C:rp:s:")) != -1) {
-		switch (c) {
+	while ((c = getopt(argc, argv, "?dK:k:C:rp:s:")) != -1) switch (c) {
 		case 'd':
 			config.flags &= ~NDC_DETACH;
 			break;
@@ -275,25 +274,24 @@ main(int argc, char *argv[])
 		case 'k': break;
 
 		case 'C':
-			config.chroot = strdup(optarg);
-			break;
+			  config.chroot = strdup(optarg);
+			  break;
 
 		case 'r':
-			config.flags |= NDC_ROOT;
-			break;
+			  config.flags |= NDC_ROOT;
+			  break;
 
 		case 'p':
-			config.port = atoi(optarg);
-			break;
+			  config.port = atoi(optarg);
+			  break;
 
 		case 's':
-			config.ssl_port = atoi(optarg);
-			break;
+			  config.ssl_port = atoi(optarg);
+			  break;
 
 		default:
-			usage(*argv);
-			return 1;
-		}
+			  usage(*argv);
+			  return 1;
 	}
 
 	qdb_init();
@@ -301,8 +299,7 @@ main(int argc, char *argv[])
 
 	optind = 1;
 
-	while ((c = getopt(argc, argv, "?dK:k:C:rp:s:")) != -1) {
-		switch (c) {
+	while ((c = getopt(argc, argv, "?dK:k:C:rp:s:")) != -1) switch (c) {
 		case 'K':
 			ndc_certs_add(optarg);
 			break;
@@ -312,7 +309,6 @@ main(int argc, char *argv[])
 			break;
 
 		default: break;
-		}
 	}
 
 	setup(argv[argc - 1]);
