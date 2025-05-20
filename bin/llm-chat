@@ -1,2 +1,0 @@
-#!/bin/sh
-$HOME/llm/llama.cpp/build/bin/llama-cli -m `llm-path $1` -cnv -ngl 32 -t $(nproc)

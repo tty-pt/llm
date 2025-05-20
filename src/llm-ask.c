@@ -7,7 +7,7 @@
 
 #define PORT 4242
 #define BUF_SIZE 4096
-#define END_TAG "<|im_"
+#define END_TAG "<|im"
 
 int main(int argc, char *argv[]) {
     char prompt[BUFSIZ * 2], *p = prompt;

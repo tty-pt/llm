@@ -190,13 +190,13 @@ void generate(int fd, const char * prompt) {
     o = output;
     while (*o == ' ')
 	    o++;
-    ndc_writef(fd, "%s", o);
+
     *pos_r = pos;
 }
 
 void do_ASK(int fd, int argc, char *argv[]) {
 	char buf[BUFSIZ * 2], *b = buf;
-	b += snprintf(b, sizeof(buf) - (b - buf), "<|im_start|>user\n");
+	b += snprintf(b, sizeof(buf) - (b - buf), "%suser\n ", start);
 	for (int i = 1; i < argc; i++) {
 		int ret = snprintf(b, sizeof(buf) - (b - buf), " %s", argv[i]);
 		if (ret < 0) {
@@ -205,15 +205,23 @@ void do_ASK(int fd, int argc, char *argv[]) {
 		}
 		b += ret;
 	}
-	b += snprintf(b, sizeof(buf) - (b - buf), "\n<|im_end|>\n<|im_start|>assistant\n ");
+	b += snprintf(b, sizeof(buf) - (b - buf), "\n%s\n%sassistant\n ", end, start);
 	generate(fd, buf);
-	ndc_writef(fd, "<|im_end|>\n");
+	ndc_writef(fd, "%s\n%s\n", o, end);
+}
+
+void do_CHAT(int fd, int argc __attribute__((unused)), char *argv[] __attribute__((unused))) {
+	fdi_init(&fdis[fd]);
 }
 
 struct cmd_slot cmds[] = {
 	{
 		.name = "ask",
 		.cb = &do_ASK,
+		.flags = CF_NOAUTH | CF_NOTRIM,
+	}, {
+		.name = "chat",
+		.cb = &do_CHAT,
 		.flags = CF_NOAUTH | CF_NOTRIM,
 	}, {
 		.name = NULL
@@ -223,7 +231,6 @@ struct cmd_slot cmds[] = {
 int
 ndc_accept(int fd) {
 	fdis[fd].ctx = general.ctx;
-	/* fdi_init(&fdis[fd]); */
 	return 0;
 }
 
