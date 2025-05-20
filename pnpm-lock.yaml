@@ -12,8 +12,8 @@ importers:
         specifier: ^0.0.1
         version: 0.0.1
       '@tty-pt/ndc':
-        specifier: ^0.9.5
-        version: 0.9.5(@tty-pt/qdb@0.0.14)(@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0))(@xterm/addon-web-links@0.11.0(@xterm/xterm@5.5.0))(@xterm/xterm@5.5.0)
+        specifier: ^0.9.7
+        version: 0.9.7(@tty-pt/qdb@0.0.14)(@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0))(@xterm/addon-web-links@0.11.0(@xterm/xterm@5.5.0))(@xterm/xterm@5.5.0)
       '@tty-pt/qdb':
         specifier: ^0.0.14
         version: 0.0.14
@@ -23,8 +23,8 @@ packages:
   '@tty-pt/mk@0.0.1':
     resolution: {integrity: sha512-0mttCm5t4LmSmmh1AJL09011iLvodGycIJzYy1KM6XNSjKZWVlqlkm/caT6c2eoXZok6EkATGH8L/Y3bMrBrTQ==}
 
-  '@tty-pt/ndc@0.9.5':
-    resolution: {integrity: sha512-l0NF0VxhrkZw+zUB65Yr/hyj9eQhRNx/W+MpW3TY9Wdd129sAQTfY2aSi6ffK6jOdu/SFOaDJeCeAtzp+pQNHA==}
+  '@tty-pt/ndc@0.9.7':
+    resolution: {integrity: sha512-gEeCrgZVjEF199+pniaMKPt0rzcgOPah0D51GeQ5beHyEQTDCpC8hFsZ0ua7go+yTq4Ghe8hxHxu5Yioa3Ez6w==}
     hasBin: true
     peerDependencies:
       '@tty-pt/qdb': ^0.0.14
@@ -52,8 +52,9 @@ snapshots:
 
   '@tty-pt/mk@0.0.1': {}
 
-  '@tty-pt/ndc@0.9.5(@tty-pt/qdb@0.0.14)(@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0))(@xterm/addon-web-links@0.11.0(@xterm/xterm@5.5.0))(@xterm/xterm@5.5.0)':
+  '@tty-pt/ndc@0.9.7(@tty-pt/qdb@0.0.14)(@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0))(@xterm/addon-web-links@0.11.0(@xterm/xterm@5.5.0))(@xterm/xterm@5.5.0)':
     dependencies:
+      '@tty-pt/mk': 0.0.1
       '@tty-pt/qdb': 0.0.14
       '@xterm/addon-fit': 0.10.0(@xterm/xterm@5.5.0)
       '@xterm/addon-web-links': 0.11.0(@xterm/xterm@5.5.0)

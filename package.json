@@ -1,10 +1,10 @@
 {
-  "name": "llm",
-  "version": "1.0.0",
+  "name": "@tty-pt/llm",
+  "version": "0.0.1",
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"@tty-pt/llm: no tests\" && exit 1"
   },
   "keywords": [],
   "author": "",
@@ -12,7 +12,7 @@
   "packageManager": "pnpm@10.11.0",
   "dependencies": {
     "@tty-pt/mk": "^0.0.1",
-    "@tty-pt/ndc": "^0.9.5",
+    "@tty-pt/ndc": "^0.9.7",
     "@tty-pt/qdb": "^0.0.14"
   }
 }

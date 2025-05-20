@@ -51,17 +51,12 @@ int main(int argc, char *argv[]) {
 
     char response[BUF_SIZE];
     ssize_t n;
-    while ((n = recv(sock, response, sizeof(response) - 1, 0)) > 0) {
-        response[n] = '\0';
-	char *end = strstr(response, END_TAG);
-        if (end) {
-		*end++ = '\n';
-		*end = '\0';
-		fputs(response, stdout);
-		break;
-	}
-        fputs(response, stdout);
-    }
+    n = recv(sock, response, sizeof(response) - 1, 0);
+    response[n] = '\0';
+    char *end = strstr(response, END_TAG);
+    if (end)
+    	*end = '\0';
+    printf("%s\n", response);
 
     close(sock);
     return 0;
