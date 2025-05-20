@@ -11,9 +11,3 @@ mkdir build
 cd build
 cmake ..
 make -j4
-read -p "Download $REPO / $FILENAME? " y
-case $y in
-	y)
-		llm-hug download "$REPO" "$FILENAME"
-		;;
-esac
