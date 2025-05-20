@@ -19,7 +19,6 @@ const struct llama_vocab * vocab;
 char output[MAX_TOKEN_LEN * MAX_TOKENS], *o;
 
 llama_token tokens[MAX_TOKENS];
-int n_tokens = 0;
 
 static llama_seq_id seq_ids[MAX_TOKENS];
 
@@ -82,8 +81,8 @@ setup(const char * model_path) {
 	llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
 
 	vocab = llama_model_get_vocab(model);
-	start_n = llama_tokenize(vocab, start, strlen(start), start_tk, 4, true, true);
-	end_n = llama_tokenize(vocab, end, strlen(end), end_tk, 4, true, true);
+	start_n = llama_tokenize(vocab, start, strlen(start), start_tk, strlen(start), true, true);
+	end_n = llama_tokenize(vocab, end, strlen(end), end_tk, strlen(end), true, true);
 }
 
 static inline int
@@ -94,6 +93,42 @@ tk_mem(int pos, size_t n) {
 	}
 
 	pos += n;
+	return pos;
+}
+
+static inline int
+tokenize(int fd, const char *prompt) {
+	int n_tokens = llama_tokenize(vocab, prompt, strlen(prompt), tokens, MAX_TOKENS, true, true);
+
+	if (n_tokens < 1) {
+		ndc_writef(fd, "Tokenization failed\n");
+		exit(1);
+	}
+
+	return n_tokens;
+}
+
+static inline int
+memorize(fdi_t *fdi, int pos, size_t len) {
+	tk_mem(pos, len);
+
+	struct llama_batch batch = llama_batch_init(len, 0, 1);
+	batch.n_tokens = len;
+
+	for (register size_t i = 0; i < len; ++i) {
+		batch.token[i] = tokens[i];
+		batch.pos[i] = pos++;
+		batch.n_seq_id[i] = 1;
+		batch.seq_id[i] = &seq_ids[i];
+		batch.seq_id[i][0] = 0;
+	}
+	batch.logits[len - 1] = 1;
+
+	if (llama_decode(fdi->ctx, batch) != 0) {
+		fprintf(stderr, "Decode failed\n");
+		return 0;
+	}
+
 	return pos;
 }
 
@@ -117,18 +152,12 @@ inference(fdi_t *fdi, int pos) {
 	llama_token_to_piece(vocab, tok, buf, sizeof(buf), 0, true);
 	o += snprintf(o, sizeof(output) - (o - output), "%s", buf);
 
-	n_tokens = 1;
-	pos = tk_mem(pos, 1);
-
-	struct llama_batch b = llama_batch_init(1, 0, 1);
-	b.n_tokens = 1;
-	b.token[0] = tok;
-	b.pos[0] = pos++;
-	b.n_seq_id[0] = 1;
-	b.seq_id[0] = &seq_ids[0];
-	b.seq_id[0][0] = 0;
-	b.logits[0] = 1;
 	int ret = 1;
+	tokens[0] = tok;
+	int i = memorize(fdi, pos, 1);
+	if (!i)
+		return 0;
+	pos += i;
 
 	if (llama_decode(fdi->ctx, b) != 0) {
 		fprintf(stderr, "\nDecode failed\n");
@@ -141,18 +170,6 @@ inference(fdi_t *fdi, int pos) {
 	return ret;
 }
 
-static inline int
-tokenize(int fd, const char *prompt) {
-	n_tokens = llama_tokenize(vocab, prompt, strlen(prompt), tokens, MAX_TOKENS, true, true);
-
-	if (n_tokens < 1) {
-		ndc_writef(fd, "Tokenization failed\n");
-		exit(1);
-	}
-
-	return n_tokens;
-}
-
 void generate(int fd, const char * prompt) {
 	fdi_t *fdi = &fdis[fd];
 	int *pos_r = fdi->ctx == general.ctx ? &general.pos : &fdi->pos;
@@ -160,29 +177,16 @@ void generate(int fd, const char * prompt) {
 	int i;
 	o = output;
 
-	tokenize(fd, prompt);
-	tk_mem(pos, n_tokens);
-
-	struct llama_batch batch = llama_batch_init(n_tokens, 0, 1);
-	batch.n_tokens = n_tokens;
-
-	for (i = 0; i < n_tokens; ++i) {
-		batch.token[i] = tokens[i];
-		batch.pos[i] = pos++;
-		batch.n_seq_id[i] = 1;
-		batch.seq_id[i] = &seq_ids[i];
-		batch.seq_id[i][0] = 0;
-	}
-	batch.logits[i - 1] = 1;
-
-	if (llama_decode(fdi->ctx, batch) != 0) {
-		fprintf(stderr, "Failed to decode prompt\n");
+	int n_tokens = tokenize(fd, prompt);
+	i = memorize(fdi, pos, n_tokens);
+	if (!i)
 		return;
-	}
+	pos += i;
 
 	int max_gen = MAX_TOKENS;
 
-	for (int step = 0; step < max_gen && inference(fdi, pos); ++step)
+	fdi->line = NULL;
+	for (int step = 0; step < max_gen && inference(fd, fdi, pos); ++step)
 		pos++;
 
 	snprintf(o, sizeof(output) - (o - output), "%s\n", end);
