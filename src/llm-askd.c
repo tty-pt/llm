@@ -7,8 +7,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#define MAX_TOKENS 512
-#define MAX_MEMORY (MAX_TOKENS * 20)
+#define MAX_TOKENS 256
+#define MAX_MEMORY (MAX_TOKENS * 72)
 #define MAX_TOKEN_LEN 64
 
 struct llama_model * model = NULL;
@@ -30,7 +30,14 @@ const char *end = "<|im_end|>";
 llama_token end_tk[6];
 int end_n = 0;
 
+const char *nl = "\n";
+llama_token nl_tk[4];
+int nl_n = 0;
+
+static char fullexec[BUFSIZ * 64], *fe;
+
 typedef struct fd_info {
+	char *line;
 	struct llama_context *ctx;
 	int pos;
 } fdi_t;
@@ -50,6 +57,7 @@ fdi_init(fdi_t *fdi) {
 	}
 	llama_kv_self_clear(fdi->ctx);
 	fdi->pos = 0;
+	fdi->line = NULL;
 }
 
 static inline void
@@ -83,6 +91,7 @@ setup(const char * model_path) {
 	vocab = llama_model_get_vocab(model);
 	start_n = llama_tokenize(vocab, start, strlen(start), start_tk, strlen(start), true, true);
 	end_n = llama_tokenize(vocab, end, strlen(end), end_tk, strlen(end), true, true);
+	nl_n = llama_tokenize(vocab, nl, strlen(nl), nl_tk, strlen(nl), true, true);
 }
 
 static inline int
@@ -117,7 +126,7 @@ memorize(fdi_t *fdi, int pos, size_t len) {
 
 	for (register size_t i = 0; i < len; ++i) {
 		batch.token[i] = tokens[i];
-		batch.pos[i] = pos++;
+		batch.pos[i] = pos + i;
 		batch.n_seq_id[i] = 1;
 		batch.seq_id[i] = &seq_ids[i];
 		batch.seq_id[i][0] = 0;
@@ -129,12 +138,77 @@ memorize(fdi_t *fdi, int pos, size_t len) {
 		return 0;
 	}
 
-	return pos;
+	return len;
 }
 
 static inline int
-inference(fdi_t *fdi, int pos) {
+commit(int fd, fdi_t *fdi, int pos, const char *prompt) {
+	int n_tokens = tokenize(fd, prompt);
+	int i = memorize(fdi, pos, n_tokens);
+	if (!i)
+		return 0;
+	pos += i;
+	return pos;
+}
+
+void cmd_cb(
+		int fd __attribute__((unused)),
+		char *buf,
+		size_t len __attribute__((unused)),
+		int ofd __attribute__((unused)))
+{
+	fe += snprintf(fe, sizeof(fullexec) - (fe - fullexec), "%s", buf);
+}
+
+static inline int
+cmd_exec(int fd, fdi_t *fdi, int pos) {
+	int i;
+
+	if (!fdi->line)
+		return pos;
+
+	char *pound = strstr(fdi->line, "$ ");
+	if (!pound)
+		return pos;
+
+	char argsbuf[BUFSIZ], *space;
+	int argc = 0;
+	char *args[8];
+
+	snprintf(argsbuf, sizeof(argsbuf), "%s", pound + 2);
+	space = argsbuf;
+
+	do {
+		args[argc] = space;
+		argc++;
+		space = strchr(space, ' ');
+		if (!space)
+			break;
+		*space = '\0';
+		space++;
+	} while (1);
+
+	args[argc] = NULL;
+	space = strchr(args[argc - 1], '\n');
+	*space = '\0';
+
+	fe = fullexec;
+	memset(fullexec, 0, sizeof(fullexec));
+	ndc_exec(fd, args, cmd_cb, NULL, 0);
+	*(fe - 1) = '\0';
+
+	if (!(i = commit(fd, fdi, pos, fullexec)))
+		return 0;
+
+	o += snprintf(o, sizeof(output) - (o - output), "%s", fullexec);
+	return pos + i;
+}
+
+static inline int
+inference(int fd, fdi_t *fdi, int *pos_r) {
 	llama_token tok = tokens[0] = llama_sampler_sample(sampler, fdi->ctx, -1);
+	int pos = *pos_r;
+
 	llama_sampler_accept(sampler, tok);
 
 	if (tok == llama_vocab_fim_suf(vocab) ||
@@ -150,6 +224,7 @@ inference(fdi_t *fdi, int pos) {
 	char buf[MAX_TOKEN_LEN];
 	memset(buf, 0, sizeof(buf));
 	llama_token_to_piece(vocab, tok, buf, sizeof(buf), 0, true);
+	char *po = o;
 	o += snprintf(o, sizeof(output) - (o - output), "%s", buf);
 
 	int ret = 1;
@@ -157,16 +232,23 @@ inference(fdi_t *fdi, int pos) {
 	int i = memorize(fdi, pos, 1);
 	if (!i)
 		return 0;
+
 	pos += i;
 
-	if (llama_decode(fdi->ctx, b) != 0) {
-		fprintf(stderr, "\nDecode failed\n");
-		ret = 0;
+	char *last_nl = strrchr(po, '\n');
+
+	if (last_nl) {
+		if (!(i = cmd_exec(fd, fdi, pos)))
+			return 0;
+
+		fdi->line = last_nl + 1;
+		pos = i;
 	}
 
 	if (strstr(o - 6, "<|im_"))
 		ret = 0;
 
+	*pos_r = pos;
 	return ret;
 }
 
@@ -177,17 +259,14 @@ void generate(int fd, const char * prompt) {
 	int i;
 	o = output;
 
-	int n_tokens = tokenize(fd, prompt);
-	i = memorize(fdi, pos, n_tokens);
-	if (!i)
+	if (!(i = commit(fd, fdi, pos, prompt)))
 		return;
 	pos += i;
 
 	int max_gen = MAX_TOKENS;
 
 	fdi->line = NULL;
-	for (int step = 0; step < max_gen && inference(fd, fdi, pos); ++step)
-		pos++;
+	for (int step = 0; step < max_gen && inference(fd, fdi, &pos); ++step) ;
 
 	snprintf(o, sizeof(output) - (o - output), "%s\n", end);
 
