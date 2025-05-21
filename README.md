@@ -1,6 +1,8 @@
 # llm helper tools
 Just some simple tooling help out experimenting with llms using llama.cpp and others.
 
+This repository also includes [an ambitious idea](./memory-mipmaps.md)
+
 ## 🚀 Build / Install requirements
 Prepare the repo:
 ```sh

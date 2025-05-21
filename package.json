@@ -8,7 +8,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "BSD-2-Clause",
   "packageManager": "pnpm@10.11.0",
   "dependencies": {
     "@tty-pt/mk": "^0.0.1",
