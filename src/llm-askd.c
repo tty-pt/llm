@@ -32,15 +32,14 @@ static llama_seq_id seq_ids[MAX_TOKENS];
 const char *start = "<|im_start|>";
 
 const char *end = "<|im_end|>";
-llama_token end_tk[6];
+llama_token end_tk[8];
 int end_n = 0;
-
-static char fullexec[BUFSIZ * 64], *fe;
+const unsigned end_len = 10;
 
 typedef struct fd_info {
 	char *line;
 	struct llama_context *ctx;
-	int pos;
+	unsigned pos, end_pos;
 } fdi_t;
 
 fdi_t fdis[FD_SETSIZE], general;
@@ -59,7 +58,7 @@ fdi_init(fdi_t *fdi) {
 		exit(1);
 	}
 	llama_kv_self_clear(fdi->ctx);
-	fdi->pos = 0;
+	fdi->end_pos = fdi->pos = 0;
 	fdi->line = NULL;
 }
 
@@ -210,8 +209,9 @@ inline static void
 setup_special_tokens(void)
 {
 	vocab = llama_model_get_vocab(model);
-
-	end_n = llama_tokenize(vocab, end, strlen(end), end_tk, strlen(end), true, true);
+	// THE FOLLOWING IS UNRELIABLE FOR DIRECT COMPARISON
+	// (there might be different tokens for the same string)
+	end_n = llama_tokenize(vocab, end, strlen(end), end_tk, strlen(end), false, true);
 }
 
 static void
@@ -227,7 +227,7 @@ setup(const char *model_path)
 
 static inline int
 tokenize(int fd, const char *prompt) {
-	int n_tokens = llama_tokenize(vocab, prompt, strlen(prompt), tokens, MAX_TOKENS, true, true);
+	int n_tokens = llama_tokenize(vocab, prompt, strlen(prompt), tokens, MAX_TOKENS, false, true);
 
 	if (n_tokens < 1) {
 		ndc_writef(fd, "Tokenization failed\n");
@@ -238,7 +238,12 @@ tokenize(int fd, const char *prompt) {
 }
 
 static inline int
-memorize(fdi_t *fdi, int pos, size_t len) {
+memorize(fdi_t *fdi, unsigned *pos_r, size_t len) {
+	unsigned pos = *pos_r;
+	int excess = pos + len - MAX_MEMORY;
+	if (excess > 0)
+		pos -= excess;
+
 	struct llama_batch batch = llama_batch_init(len, 0, 1);
 	batch.n_tokens = len;
 
@@ -256,41 +261,33 @@ memorize(fdi_t *fdi, int pos, size_t len) {
 		return 0;
 	}
 
+	*pos_r += len;
 	return len;
 }
 
-static inline int
-commit(int fd, fdi_t *fdi, int pos, const char *prompt) {
+static inline void
+commit(int fd, fdi_t *fdi, unsigned *pos_r, const char *prompt) {
 	int n_tokens = tokenize(fd, prompt);
-	int i = memorize(fdi, pos, n_tokens);
-
-	if (!i)
-		return 0;
-
-	pos += i;
-
-	return pos;
+	memorize(fdi, pos_r, n_tokens);
 }
 
 void cmd_cb(
-	int fd __attribute__((unused)),
+	int fd,
 	char *buf,
-	size_t len __attribute__((unused)),
+	size_t len,
 	int ofd __attribute__((unused)))
 {
-	fe += snprintf(fe, sizeof(fullexec) - (fe - fullexec), "%s", buf);
+	ndc_write(fd, buf, len);
 }
 
-static inline int
-cmd_exec(int fd, fdi_t *fdi, int pos) {
-	int i;
-
+static inline void
+cmd_exec(int fd, fdi_t *fdi, unsigned *pos_r) {
 	if (!fdi->line)
-		return pos;
+		return;
 
 	char *pound = strstr(fdi->line, "$ ");
 	if (!pound)
-		return pos;
+		return;
 
 	char argsbuf[BUFSIZ], *space;
 	int argc = 0;
@@ -313,16 +310,8 @@ cmd_exec(int fd, fdi_t *fdi, int pos) {
 	space = strchr(args[argc - 1], '\n');
 	*space = '\0';
 
-	fe = fullexec;
-	memset(fullexec, 0, sizeof(fullexec));
 	ndc_exec(fd, args, cmd_cb, NULL, 0);
-	*(fe - 1) = '\0';
-
-	if (!(i = commit(fd, fdi, pos, fullexec)))
-		return 0;
-
-	o += snprintf(o, sizeof(output) - (o - output), "%s", fullexec);
-	return pos + i;
+	commit(fd, fdi, pos_r, ndc_execbuf);
 }
 
 static inline int
@@ -340,9 +329,8 @@ toktok(const llama_token *buffer, int len,
 }
 
 static inline int
-inference(int fd, fdi_t *fdi, int *pos_r) {
+inference(int fd, fdi_t *fdi, unsigned *pos_r) {
 	llama_token tok = tokens[0] = llama_sampler_sample(sampler, fdi->ctx, -1);
-	int pos = *pos_r;
 
 	llama_sampler_accept(sampler, tok);
 
@@ -364,42 +352,41 @@ inference(int fd, fdi_t *fdi, int *pos_r) {
 
 	int ret = 1;
 	tokens[0] = tok;
-	int batch_n = 1;
-	int i = memorize(fdi, pos, batch_n);
-	if (!i)
-		return 0;
-
-	pos += i;
+	memorize(fdi, pos_r, 1);
 
 	char *last_nl = strrchr(po, '\n');
 
 	if (last_nl) {
-		if (!(i = cmd_exec(fd, fdi, pos)))
-			return 0;
-
+		cmd_exec(fd, fdi, pos_r);
 		fdi->line = last_nl + 1;
-		pos = i;
 	}
 
-	if (toktok(tokens + pos - end_n, pos, end_tk, end_n)) {
-		pos -= end_n;
-		ret = 0;
+	size_t buflen = strlen(buf);
+	char *eoim = strchr(buf, *(end + fdi->end_pos));
+	if (eoim && (eoim - buf) <= end_len - fdi->end_pos) {
+		size_t clen = buflen - (eoim - buf);
+		if (!strncmp(eoim, end + fdi->end_pos, clen)) {
+			fdi->end_pos += clen;
+
+			if (fdi->end_pos < end_len)
+				return 1;
+
+			fdi->end_pos = 0;
+			return 0;
+		}
 	}
 
-	*pos_r = pos;
+	fdi->end_pos = 0;
+	ndc_write(fd, buf, buflen);
 	return ret;
 }
 
 void generate(int fd, const char * prompt) {
 	fdi_t *fdi = &fdis[fd];
-	int *pos_r = fdi->ctx == general.ctx ? &general.pos : &fdi->pos;
-	int pos = *pos_r;
-	int i;
+	unsigned *pos_r = fdi->ctx == general.ctx ? &general.pos : &fdi->pos;
 	o = output;
 
-	if (!(i = commit(fd, fdi, pos, prompt)))
-		return;
-	pos += i;
+	commit(fd, fdi, pos_r, prompt);
 
 	int max_gen = MAX_TOKENS;
 
@@ -407,7 +394,7 @@ void generate(int fd, const char * prompt) {
 	for (
 			int step = 0;
 			step < max_gen
-			&& inference(fd, fdi, &pos);
+			&& inference(fd, fdi, pos_r);
 			++step )
 		;
 
@@ -416,8 +403,6 @@ void generate(int fd, const char * prompt) {
 	o = output;
 	while (*o == ' ')
 		o++;
-
-	*pos_r = pos;
 }
 
 void do_ASK(int fd, int argc, char *argv[]) {
@@ -433,7 +418,7 @@ void do_ASK(int fd, int argc, char *argv[]) {
 	}
 	b += snprintf(b, sizeof(buf) - (b - buf), "\n%s\n%sassistant\n ", end, start);
 	generate(fd, buf);
-	ndc_writef(fd, "%s\n%s\n", o, end);
+	ndc_writef(fd, "%s\n", end);
 }
 
 void do_CHAT(int fd, int argc __attribute__((unused)), char *argv[] __attribute__((unused))) {

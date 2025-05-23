@@ -38,6 +38,7 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
 		return 1;
 	}
 
+	setvbuf(stdout, NULL, _IONBF, 0);
 	printf("Connected! Type your prompts (empty line to quit).\n\n");
 
 	while (1) {
@@ -65,21 +66,28 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
 			break;
 		}
 
-		ssize_t cn = recv(sock, response,
-				sizeof(response) - 1, 0);
+		int first_skip = 1;
+		while (1) {
+			ssize_t cn = read(sock, response,
+					sizeof(response) - 1);
 
-		if (cn <= 0)
-			goto done;
+			if (cn <= 0)
+				break;
 
-		response[cn] = '\0';
-		char *end = strstr(response, END_TAG);
-		if (end)
-			*end = '\0';
+			response[cn] = '\0';
 
-		printf("%s\n", response);
+			char *end = strstr(response, END_TAG);
+			if (end) {
+				*end = '\0';
+				printf("%s", response + first_skip);
+				break;
+			}
+
+			printf("%s", response + first_skip);
+			first_skip = 0;
+		}
 	}
 
-done:
 	close(sock);
 	printf("Session closed.\n");
 	return 0;
