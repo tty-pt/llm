@@ -32,8 +32,6 @@ static llama_seq_id seq_ids[MAX_TOKENS];
 const char *start = "<|im_start|>";
 
 const char *end = "<|im_end|>";
-llama_token end_tk[8];
-int end_n = 0;
 const unsigned end_len = 10;
 
 typedef struct fd_info {
@@ -205,15 +203,6 @@ setup_sampler(void)
 	llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
 }
 
-inline static void
-setup_special_tokens(void)
-{
-	vocab = llama_model_get_vocab(model);
-	// THE FOLLOWING IS UNRELIABLE FOR DIRECT COMPARISON
-	// (there might be different tokens for the same string)
-	end_n = llama_tokenize(vocab, end, strlen(end), end_tk, strlen(end), false, true);
-}
-
 static void
 setup(const char *model_path)
 {
@@ -222,7 +211,6 @@ setup(const char *model_path)
 	setup_context();
 	fdi_init(&general);
 	setup_sampler();
-	setup_special_tokens();
 }
 
 static inline int
