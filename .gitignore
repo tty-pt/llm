@@ -2,3 +2,4 @@
 /.venv
 /bin/llm-ask*
 /bin/llm-chat
+/.config.mk

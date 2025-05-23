@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <llama.h>
 #include <math.h>
 #include <ndc.h>
@@ -7,9 +8,15 @@
 #include <string.h>
 #include <unistd.h>
 
+#if CONFIG_CUDA
+#include <ggml-cuda.h>
+#include <gguf.h>
+#endif
+
 #define MAX_TOKENS 256
-#define MAX_MEMORY (MAX_TOKENS * 72)
+#define MAX_MEMORY (MAX_TOKENS * 25)
 #define MAX_TOKEN_LEN 64
+#define DEFAULT_SEQ_MAX 4
 
 struct llama_model * model = NULL;
 struct llama_context_params ctx_params;
@@ -23,16 +30,10 @@ llama_token tokens[MAX_TOKENS];
 static llama_seq_id seq_ids[MAX_TOKENS];
 
 const char *start = "<|im_start|>";
-llama_token start_tk[6];
-int start_n = 0;
 
 const char *end = "<|im_end|>";
 llama_token end_tk[6];
 int end_n = 0;
-
-const char *nl = "\n";
-llama_token nl_tk[4];
-int nl_n = 0;
 
 static char fullexec[BUFSIZ * 64], *fe;
 
@@ -50,7 +51,9 @@ void quiet_logger(enum ggml_log_level level __attribute__((unused)), const char 
 
 static inline void
 fdi_init(fdi_t *fdi) {
-	fdi->ctx = llama_init_from_model(model, ctx_params);
+	struct llama_context *ctx =
+		llama_init_from_model(model, ctx_params);
+	fdi->ctx = ctx;
 	if (!fdi->ctx) {
 		fprintf(stderr, "Failed to init context\n");
 		exit(1);
@@ -60,26 +63,87 @@ fdi_init(fdi_t *fdi) {
 	fdi->line = NULL;
 }
 
-static inline void
-setup(const char * model_path) {
-	llama_log_set(quiet_logger, NULL);
-	llama_backend_init();
+#if CONFIG_CUDA
+static int auto_ngl(const char *path, int gpu, int n_ctx)
+{
+	size_t free_b, total_b;
+	ggml_backend_cuda_get_device_memory(gpu, &free_b, &total_b);
 
-	struct llama_model_params model_params = llama_model_default_params();
-	model = llama_model_load_from_file(model_path, model_params);
-	if (!model) {
-		fprintf(stderr, "Failed to load model\n");
-		exit(1);
+	size_t reserve = (total_b <= (4ULL << 30)) ? (512ULL << 20) :
+		(total_b <= (8ULL << 30)) ? (800ULL << 20) : (1024ULL << 20);
+	size_t safety = 512ULL << 20;
+
+	if (free_b <= reserve + safety) {
+		fprintf(stderr, "Not enough free GPU memory to reserve/safety: %zu MiB\n", free_b >> 20);
+		return 0;
 	}
 
-	ctx_params = llama_context_default_params();
-	ctx_params.n_ctx = MAX_MEMORY;
-	ctx_params.n_batch = MAX_TOKENS;
-	ctx_params.n_seq_max = 4;
-	ctx_params.n_threads = sysconf(_SC_NPROCESSORS_ONLN);
+	size_t usable = free_b - reserve - safety;
 
-	fdi_init(&general);
+	struct gguf_init_params ip = { .no_alloc = true };
+	struct gguf_context *ctx = gguf_init_from_file(path, ip);
 
+	if (!ctx) {
+		fprintf(stderr, "Failed to load GGUF file: %s\n", path);
+		return 0;
+	}
+
+	int n_layers = gguf_get_val_u32(ctx, gguf_find_key(ctx, "llama.block_count"));
+	int n_embd   = gguf_get_val_u32(ctx, gguf_find_key(ctx, "llama.embedding_length"));
+	int n_tensors = gguf_get_n_tensors(ctx);
+
+	size_t *layer_sizes = calloc(n_layers, sizeof(*layer_sizes));
+	if (!layer_sizes) {
+		gguf_free(ctx);
+		fprintf(stderr, "Failed to allocate memory for layer sizes\n");
+		return 0;
+	}
+
+	size_t global = 0;
+	for (int i = 0; i < n_tensors; i++) {
+		const char *name = gguf_get_tensor_name(ctx, i);
+		if (!strstr(name, "blk.") && !strstr(name, "layers.") && !strstr(name, "block."))
+			global += gguf_get_tensor_size(ctx, i);
+	}
+
+	usable = (usable > global) ? usable - global : 0;
+
+	for (int i = 0; i < n_tensors; i++) {
+		const char *name = gguf_get_tensor_name(ctx, i);
+		const char *p = strstr(name, "blk.");
+		if (!p) p = strstr(name, "layers.");
+		if (!p) p = strstr(name, "block.");
+		if (!p) continue;
+
+		while (*p && !isdigit(*p)) p++;
+		if (!isdigit(*p)) continue;
+
+		int l = strtol(p, NULL, 10);
+		if (l >= 0 && l < n_layers)
+			layer_sizes[l] += gguf_get_tensor_size(ctx, i);
+	}
+
+	gguf_free(ctx);
+
+	size_t kv_size = (size_t)n_ctx * n_embd * 4;
+	size_t used = 0;
+	int ngl = 0;
+
+	for (int i = 0; i < n_layers; i++) {
+		size_t need = layer_sizes[i] + kv_size;
+		if (used + need > usable)
+			break;
+		used += need;
+		ngl++;
+	}
+
+	free(layer_sizes);
+	return ngl;
+}
+#endif
+
+static inline void
+sampler_setup() {
 	struct llama_sampler_chain_params chain_params = llama_sampler_chain_default_params();
 	sampler = llama_sampler_chain_init(chain_params);
 	llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40));
@@ -87,22 +151,78 @@ setup(const char * model_path) {
 	llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.9, 1));
 	llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.7));
 	llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
-
-	vocab = llama_model_get_vocab(model);
-	start_n = llama_tokenize(vocab, start, strlen(start), start_tk, strlen(start), true, true);
-	end_n = llama_tokenize(vocab, end, strlen(end), end_tk, strlen(end), true, true);
-	nl_n = llama_tokenize(vocab, nl, strlen(nl), nl_tk, strlen(nl), true, true);
 }
 
-static inline int
-tk_mem(int pos, size_t n) {
-	if (pos + n > MAX_MEMORY) {
-		int excess = pos + n - MAX_MEMORY;
-		pos -= excess;
-	}
+inline static void
+setup_model(const char *model_path)
+{
+	struct llama_model_params model_params
+		= llama_model_default_params();
 
-	pos += n;
-	return pos;
+#if CONFIG_CUDA
+	if (llama_supports_gpu_offload()) {
+		model_params.n_gpu_layers
+			= auto_ngl(model_path, 0, MAX_MEMORY);
+		model_params.split_mode =
+			LLAMA_SPLIT_MODE_LAYER;
+	}
+#endif
+
+	model = llama_model_load_from_file(
+			model_path, model_params);
+
+	if (!model) {
+		fprintf(stderr, "Failed to load model\n");
+		exit(1);
+	}
+}
+
+inline static void
+setup_context(void)
+{
+	ctx_params = llama_context_default_params();
+	ctx_params.n_ctx = MAX_MEMORY;
+	ctx_params.n_batch = MAX_TOKENS;
+	ctx_params.n_seq_max = DEFAULT_SEQ_MAX;
+	ctx_params.n_threads = sysconf(_SC_NPROCESSORS_ONLN) >> 2;
+
+#if CONFIG_CUDA
+	if (llama_supports_gpu_offload()) {
+		ctx_params.op_offload = true;
+		ctx_params.offload_kqv = true;
+	}
+#endif
+}
+
+inline static void
+setup_sampler(void)
+{
+	struct llama_sampler_chain_params chain_params = llama_sampler_chain_default_params();
+
+	sampler = llama_sampler_chain_init(chain_params);
+	llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40));
+	llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.9, 1));
+	llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.7));
+	llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
+}
+
+inline static void
+setup_special_tokens(void)
+{
+	vocab = llama_model_get_vocab(model);
+
+	end_n = llama_tokenize(vocab, end, strlen(end), end_tk, strlen(end), true, true);
+}
+
+static void
+setup(const char *model_path)
+{
+	llama_backend_init();
+	setup_model(model_path);
+	setup_context();
+	fdi_init(&general);
+	setup_sampler();
+	setup_special_tokens();
 }
 
 static inline int
@@ -119,8 +239,6 @@ tokenize(int fd, const char *prompt) {
 
 static inline int
 memorize(fdi_t *fdi, int pos, size_t len) {
-	tk_mem(pos, len);
-
 	struct llama_batch batch = llama_batch_init(len, 0, 1);
 	batch.n_tokens = len;
 
@@ -145,17 +263,20 @@ static inline int
 commit(int fd, fdi_t *fdi, int pos, const char *prompt) {
 	int n_tokens = tokenize(fd, prompt);
 	int i = memorize(fdi, pos, n_tokens);
+
 	if (!i)
 		return 0;
+
 	pos += i;
+
 	return pos;
 }
 
 void cmd_cb(
-		int fd __attribute__((unused)),
-		char *buf,
-		size_t len __attribute__((unused)),
-		int ofd __attribute__((unused)))
+	int fd __attribute__((unused)),
+	char *buf,
+	size_t len __attribute__((unused)),
+	int ofd __attribute__((unused)))
 {
 	fe += snprintf(fe, sizeof(fullexec) - (fe - fullexec), "%s", buf);
 }
@@ -205,6 +326,20 @@ cmd_exec(int fd, fdi_t *fdi, int pos) {
 }
 
 static inline int
+toktok(const llama_token *buffer, int len,
+		const llama_token *needle, int needle_len)
+{
+	if (len < needle_len)
+		return 0;
+
+	for (int i = 0; i < needle_len; i++)
+		if (buffer[len - needle_len + i] != needle[i])
+			return 0;
+
+	return needle_len;
+}
+
+static inline int
 inference(int fd, fdi_t *fdi, int *pos_r) {
 	llama_token tok = tokens[0] = llama_sampler_sample(sampler, fdi->ctx, -1);
 	int pos = *pos_r;
@@ -229,7 +364,8 @@ inference(int fd, fdi_t *fdi, int *pos_r) {
 
 	int ret = 1;
 	tokens[0] = tok;
-	int i = memorize(fdi, pos, 1);
+	int batch_n = 1;
+	int i = memorize(fdi, pos, batch_n);
 	if (!i)
 		return 0;
 
@@ -245,8 +381,10 @@ inference(int fd, fdi_t *fdi, int *pos_r) {
 		pos = i;
 	}
 
-	if (strstr(o - 6, "<|im_"))
+	if (toktok(tokens + pos - end_n, pos, end_tk, end_n)) {
+		pos -= end_n;
 		ret = 0;
+	}
 
 	*pos_r = pos;
 	return ret;
@@ -266,7 +404,12 @@ void generate(int fd, const char * prompt) {
 	int max_gen = MAX_TOKENS;
 
 	fdi->line = NULL;
-	for (int step = 0; step < max_gen && inference(fd, fdi, &pos); ++step) ;
+	for (
+			int step = 0;
+			step < max_gen
+			&& inference(fd, fdi, &pos);
+			++step )
+		;
 
 	snprintf(o, sizeof(output) - (o - output), "%s\n", end);
 
@@ -395,6 +538,7 @@ main(int argc, char *argv[])
 	}
 
 	setup(argv[argc - 1]);
+	llama_print_system_info();
 	ndc_init();
 	int ret = ndc_main();
 	llama_sampler_free(sampler);

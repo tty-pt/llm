@@ -9,5 +9,4 @@ python3 -m venv .venv
 cd llama.cpp
 mkdir build
 cd build
-cmake ..
-make -j4
+./../../llama-setup.sh
