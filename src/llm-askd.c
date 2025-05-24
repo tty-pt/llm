@@ -23,8 +23,6 @@ struct llama_context_params ctx_params;
 struct llama_sampler * sampler = NULL;
 const struct llama_vocab * vocab;
 
-char output[MAX_TOKEN_LEN * MAX_TOKENS], *o;
-
 llama_token tokens[MAX_TOKENS];
 
 static llama_seq_id seq_ids[MAX_TOKENS];
@@ -35,9 +33,9 @@ const char *end = "<|im_end|>";
 const unsigned end_len = 10;
 
 typedef struct fd_info {
-	char *line;
+	char line_buf[BUFSIZ * 4];
 	struct llama_context *ctx;
-	unsigned pos, end_pos;
+	unsigned pos, end_pos, line_pos;
 } fdi_t;
 
 fdi_t fdis[FD_SETSIZE], general;
@@ -56,8 +54,8 @@ fdi_init(fdi_t *fdi) {
 		exit(1);
 	}
 	llama_kv_self_clear(fdi->ctx);
-	fdi->end_pos = fdi->pos = 0;
-	fdi->line = NULL;
+	fdi->line_pos = fdi->end_pos = fdi->pos = 0;
+	memset(fdi->line_buf, 0, sizeof(fdi->line_buf));
 }
 
 #if CONFIG_CUDA
@@ -247,6 +245,7 @@ static inline void
 commit(int fd, fdi_t *fdi, unsigned *pos_r, const char *prompt) {
 	int n_tokens = tokenize(fd, prompt);
 	memorize(fdi, pos_r, n_tokens);
+	/* fprintf(stderr, "commit: '%s'\n", prompt); */
 }
 
 void cmd_cb(
@@ -264,12 +263,10 @@ void cmd_cb(
 
 static inline void
 cmd_exec(int fd, fdi_t *fdi, unsigned *pos_r) {
-	/* fprintf(stderr, "EXEC! %s\n", fdi->line); */
-
-	if (!fdi->line)
+	if (!fdi->line_pos)
 		return;
 
-	char *pound = strstr(fdi->line, "$ ");
+	char *pound = strstr(fdi->line_buf, "$ ");
 	if (!pound)
 		return;
 
@@ -292,15 +289,11 @@ cmd_exec(int fd, fdi_t *fdi, unsigned *pos_r) {
 
 	args[argc] = NULL;
 	space = strchr(args[argc - 1], '\n');
-	*space = '\0';
+	if (space)
+		*space = '\0';
 
-	ndc_write(fd, "\n", 1);
-	commit(fd, fdi, pos_r, "\n");
-
-	/* fprintf(stderr, "CMD! %s\n", argsbuf); */
 	ndc_exec(fd, args, cmd_cb, NULL, 0);
 	commit(fd, fdi, pos_r, ndc_execbuf);
-	commit(fd, fdi, pos_r, "\n\n");
 }
 
 static inline int
@@ -336,50 +329,53 @@ inference(int fd, fdi_t *fdi, unsigned *pos_r) {
 	char buf[MAX_TOKEN_LEN];
 	memset(buf, 0, sizeof(buf));
 	llama_token_to_piece(vocab, tok, buf, sizeof(buf), 0, true);
-	char *po = o;
-	o += snprintf(o, sizeof(output) - (o - output), "%s", buf);
-
 	int ret = 1;
 	tokens[0] = tok;
 	memorize(fdi, pos_r, 1);
 
-	char *last_nl = strrchr(po, '\n');
-
-	if (last_nl) {
-		cmd_exec(fd, fdi, pos_r);
-		fdi->line = last_nl + 1;
-	}
-
 	size_t buflen = strlen(buf);
 	char *eoim = strchr(buf, *(end + fdi->end_pos));
+	/* fprintf(stderr, "tok mem '%s' eoim '%s' clen %lu\n", buf, eoim, buflen - (eoim - buf)); */
 	if (eoim && (eoim - buf) <= end_len - fdi->end_pos) {
 		size_t clen = buflen - (eoim - buf);
-		if (!strncmp(eoim, end + fdi->end_pos, clen)) {
-			fdi->end_pos += clen;
 
-			if (fdi->end_pos < end_len)
-				return 1;
+		if (strncmp(eoim, end + fdi->end_pos, clen))
+			goto end;
 
-			fdi->end_pos = 0;
-			return 0;
-		}
+		fdi->end_pos += clen;
+
+		if (fdi->end_pos < end_len)
+			return 1;
+
+		fdi->end_pos = 0;
+		return 0;
 	}
+
+end:	if (fdi->end_pos)
+		ndc_write(fd, (void *) end, fdi->end_pos);
 
 	fdi->end_pos = 0;
 	ndc_write(fd, buf, buflen);
+	snprintf(&fdi->line_buf[fdi->line_pos], sizeof(fdi->line_buf) - fdi->line_pos, "%s", buf);
+	fdi->line_pos += buflen;
+
+	if (strrchr(buf, '\n')) {
+		cmd_exec(fd, fdi, pos_r);
+		fdi->line_pos = 0;
+	}
+
 	return ret;
 }
 
 void generate(int fd, const char * prompt) {
 	fdi_t *fdi = &fdis[fd];
 	unsigned *pos_r = fdi->ctx == general.ctx ? &general.pos : &fdi->pos;
-	o = output;
 
 	commit(fd, fdi, pos_r, prompt);
 
 	int max_gen = MAX_TOKENS;
 
-	fdi->line = NULL;
+	fdi->line_pos = 0;
 	for (
 			int step = 0;
 			step < max_gen
@@ -387,16 +383,13 @@ void generate(int fd, const char * prompt) {
 			++step )
 		;
 
-	snprintf(o, sizeof(output) - (o - output), "%s\n", end);
-
-	o = output;
-	while (*o == ' ')
-		o++;
+	cmd_exec(fd, fdi, pos_r);
+	fdi->line_pos = 0;
 }
 
 void do_ASK(int fd, int argc, char *argv[]) {
 	char buf[BUFSIZ * 2], *b = buf;
-	b += snprintf(b, sizeof(buf) - (b - buf), "%suser\n ", start);
+	b += snprintf(b, sizeof(buf) - (b - buf), "%suser\n", start);
 	for (int i = 1; i < argc; i++) {
 		int ret = snprintf(b, sizeof(buf) - (b - buf), " %s", argv[i]);
 		if (ret < 0) {
@@ -405,7 +398,7 @@ void do_ASK(int fd, int argc, char *argv[]) {
 		}
 		b += ret;
 	}
-	b += snprintf(b, sizeof(buf) - (b - buf), "\n%s\n%sassistant\n ", end, start);
+	b += snprintf(b, sizeof(buf) - (b - buf), "%s\n%sassistant\n ", end, start);
 	generate(fd, buf);
 	ndc_writef(fd, "%s\n", end);
 }
