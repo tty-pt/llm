@@ -86,6 +86,7 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
 			printf("%s", response + first_skip);
 			first_skip = 0;
 		}
+		putchar('\n');
 	}
 
 	close(sock);

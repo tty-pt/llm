@@ -139,17 +139,6 @@ static int auto_ngl(const char *path, int gpu, int n_ctx)
 }
 #endif
 
-static inline void
-sampler_setup() {
-	struct llama_sampler_chain_params chain_params = llama_sampler_chain_default_params();
-	sampler = llama_sampler_chain_init(chain_params);
-	llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40));
-
-	llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.9, 1));
-	llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.7));
-	llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
-}
-
 inline static void
 setup_model(const char *model_path)
 {
@@ -197,9 +186,9 @@ setup_sampler(void)
 	struct llama_sampler_chain_params chain_params = llama_sampler_chain_default_params();
 
 	sampler = llama_sampler_chain_init(chain_params);
-	llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40));
-	llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.9, 1));
-	llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.7));
+	/* llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40)); */
+	/* llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.9, 1)); */
+	/* llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.7)); */
 	llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
 }
 
@@ -210,12 +199,13 @@ setup(const char *model_path)
 	setup_model(model_path);
 	setup_context();
 	fdi_init(&general);
+	vocab = llama_model_get_vocab(model);
 	setup_sampler();
 }
 
 static inline int
 tokenize(int fd, const char *prompt) {
-	int n_tokens = llama_tokenize(vocab, prompt, strlen(prompt), tokens, MAX_TOKENS, false, true);
+	int n_tokens = llama_tokenize(vocab, prompt, strlen(prompt), tokens, MAX_TOKENS, true, true);
 
 	if (n_tokens < 1) {
 		ndc_writef(fd, "Tokenization failed\n");
@@ -265,11 +255,17 @@ void cmd_cb(
 	size_t len,
 	int ofd __attribute__((unused)))
 {
+	fdi_t *fdi = &fdis[fd];
+	unsigned *pos_r = fdi->ctx == general.ctx ? &general.pos : &fdi->pos;
+
 	ndc_write(fd, buf, len);
+	commit(fd, fdi, pos_r, buf);
 }
 
 static inline void
 cmd_exec(int fd, fdi_t *fdi, unsigned *pos_r) {
+	/* fprintf(stderr, "EXEC! %s\n", fdi->line); */
+
 	if (!fdi->line)
 		return;
 
@@ -298,8 +294,13 @@ cmd_exec(int fd, fdi_t *fdi, unsigned *pos_r) {
 	space = strchr(args[argc - 1], '\n');
 	*space = '\0';
 
+	ndc_write(fd, "\n", 1);
+	commit(fd, fdi, pos_r, "\n");
+
+	/* fprintf(stderr, "CMD! %s\n", argsbuf); */
 	ndc_exec(fd, args, cmd_cb, NULL, 0);
 	commit(fd, fdi, pos_r, ndc_execbuf);
+	commit(fd, fdi, pos_r, "\n\n");
 }
 
 static inline int
