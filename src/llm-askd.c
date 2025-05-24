@@ -11,6 +11,7 @@
 #if CONFIG_CUDA
 #include <ggml-cuda.h>
 #include <gguf.h>
+#include <cuda_runtime.h>
 #endif
 
 #define MAX_TOKENS 256
@@ -193,6 +194,7 @@ setup_sampler(void)
 static void
 setup(const char *model_path)
 {
+	cudaDeviceReset();
 	llama_backend_init();
 	setup_model(model_path);
 	setup_context();
@@ -214,8 +216,8 @@ tokenize(int fd, const char *prompt) {
 }
 
 static inline int
-memorize(fdi_t *fdi, unsigned *pos_r, size_t len) {
-	unsigned pos = *pos_r;
+memorize(fdi_t *fdi, size_t len) {
+	unsigned pos = fdi->pos;
 	int excess = pos + len - MAX_MEMORY;
 	if (excess > 0)
 		pos -= excess;
@@ -237,14 +239,14 @@ memorize(fdi_t *fdi, unsigned *pos_r, size_t len) {
 		return 0;
 	}
 
-	*pos_r += len;
+	fdi->pos += len;
 	return len;
 }
 
 static inline void
-commit(int fd, fdi_t *fdi, unsigned *pos_r, const char *prompt) {
+commit(int fd, fdi_t *fdi, const char *prompt) {
 	int n_tokens = tokenize(fd, prompt);
-	memorize(fdi, pos_r, n_tokens);
+	memorize(fdi, n_tokens);
 	/* fprintf(stderr, "commit: '%s'\n", prompt); */
 }
 
@@ -255,14 +257,12 @@ void cmd_cb(
 	int ofd __attribute__((unused)))
 {
 	fdi_t *fdi = &fdis[fd];
-	unsigned *pos_r = fdi->ctx == general.ctx ? &general.pos : &fdi->pos;
-
 	ndc_write(fd, buf, len);
-	commit(fd, fdi, pos_r, buf);
+	commit(fd, fdi, buf);
 }
 
 static inline void
-cmd_exec(int fd, fdi_t *fdi, unsigned *pos_r) {
+cmd_exec(int fd, fdi_t *fdi) {
 	if (!fdi->line_pos)
 		return;
 
@@ -293,7 +293,7 @@ cmd_exec(int fd, fdi_t *fdi, unsigned *pos_r) {
 		*space = '\0';
 
 	ndc_exec(fd, args, cmd_cb, NULL, 0);
-	commit(fd, fdi, pos_r, ndc_execbuf);
+	commit(fd, fdi, ndc_execbuf);
 }
 
 static inline int
@@ -311,7 +311,7 @@ toktok(const llama_token *buffer, int len,
 }
 
 static inline int
-inference(int fd, fdi_t *fdi, unsigned *pos_r) {
+inference(int fd, fdi_t *fdi) {
 	llama_token tok = tokens[0] = llama_sampler_sample(sampler, fdi->ctx, -1);
 
 	llama_sampler_accept(sampler, tok);
@@ -331,7 +331,7 @@ inference(int fd, fdi_t *fdi, unsigned *pos_r) {
 	llama_token_to_piece(vocab, tok, buf, sizeof(buf), 0, true);
 	int ret = 1;
 	tokens[0] = tok;
-	memorize(fdi, pos_r, 1);
+	memorize(fdi, 1);
 
 	size_t buflen = strlen(buf);
 	char *eoim = strchr(buf, *(end + fdi->end_pos));
@@ -360,7 +360,7 @@ end:	if (fdi->end_pos)
 	fdi->line_pos += buflen;
 
 	if (strrchr(buf, '\n')) {
-		cmd_exec(fd, fdi, pos_r);
+		cmd_exec(fd, fdi);
 		fdi->line_pos = 0;
 	}
 
@@ -369,21 +369,19 @@ end:	if (fdi->end_pos)
 
 void generate(int fd, const char * prompt) {
 	fdi_t *fdi = &fdis[fd];
-	unsigned *pos_r = fdi->ctx == general.ctx ? &general.pos : &fdi->pos;
-
-	commit(fd, fdi, pos_r, prompt);
-
 	int max_gen = MAX_TOKENS;
+
+	commit(fd, fdi, prompt);
 
 	fdi->line_pos = 0;
 	for (
 			int step = 0;
 			step < max_gen
-			&& inference(fd, fdi, pos_r);
+			&& inference(fd, fdi);
 			++step )
 		;
 
-	cmd_exec(fd, fdi, pos_r);
+	cmd_exec(fd, fdi);
 	fdi->line_pos = 0;
 }
 
