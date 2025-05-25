@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #if CONFIG_CUDA
@@ -15,7 +16,7 @@
 #endif
 
 #define MAX_TOKENS 256
-#define MAX_MEMORY (MAX_TOKENS * 25)
+#define MAX_MEMORY (MAX_TOKENS * 10)
 #define MAX_TOKEN_LEN 64
 #define DEFAULT_SEQ_MAX 4
 
@@ -146,10 +147,17 @@ setup_model(const char *model_path)
 
 #if CONFIG_CUDA
 	if (llama_supports_gpu_offload()) {
-		model_params.n_gpu_layers
-			= auto_ngl(model_path, 0, MAX_MEMORY);
-		model_params.split_mode =
-			LLAMA_SPLIT_MODE_LAYER;
+
+		int dev = 0;
+		cudaError_t err = cudaSetDevice(dev);
+		if (err != cudaSuccess) {
+			fprintf(stderr, "Failed to set CUDA device %d: %s\n", dev, cudaGetErrorString(err));
+			fprintf(stderr, "Disabling GPU offload.\n");
+			model_params.n_gpu_layers = 0;
+		} else {
+			model_params.n_gpu_layers = auto_ngl(model_path, dev, MAX_MEMORY);
+			model_params.split_mode = LLAMA_SPLIT_MODE_LAYER;
+		}
 	}
 #endif
 
@@ -502,7 +510,31 @@ main(int argc, char *argv[])
 		default: break;
 	}
 
-	setup(argv[argc - 1]);
+	struct stat st;
+	char *arg_model = argv[argc - 1];
+	char model_path[BUFSIZ];
+
+	if (stat(arg_model, &st) == 0 && S_ISREG(st.st_mode)) {
+		snprintf(model_path, sizeof(model_path),
+				"%s", arg_model);
+	} else {
+		FILE *fp;
+		char cmd[BUFSIZ];
+		snprintf(cmd, sizeof(cmd),
+				"llm-path %s", arg_model);
+		fp = popen(cmd, "r");
+		if (!fp || !fgets(model_path, sizeof(model_path), fp)) {
+			fprintf(stderr, "Couldn't resolve model\n");
+			exit(1);
+		}
+		pclose(fp);
+
+		char *nl = strchr(model_path, '\n');
+		if (nl) *nl = '\0';
+		arg_model = model_path;
+	}
+
+	setup(arg_model);
 	llama_print_system_info();
 	ndc_init();
 	int ret = ndc_main();

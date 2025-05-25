@@ -16,4 +16,4 @@ _llm_askd_complete()
 
     COMPREPLY=( $(compgen -W "$matches" -- "$cur") )
 }
-complete -F _llm_askd_complete askd
+complete -F _llm_askd_complete llm-askd
