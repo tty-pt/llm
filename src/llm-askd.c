@@ -51,10 +51,8 @@ fdi_init(fdi_t *fdi) {
 	struct llama_context *ctx =
 		llama_init_from_model(model, ctx_params);
 	fdi->ctx = ctx;
-	if (!fdi->ctx) {
-		fprintf(stderr, "Failed to init context\n");
-		exit(1);
-	}
+	if (!fdi->ctx)
+		ndclog(LOG_ERR, "Failed to init context\n");
 	llama_kv_self_clear(fdi->ctx);
 	fdi->line_pos = fdi->end_pos = fdi->pos = 0;
 	memset(fdi->line_buf, 0, sizeof(fdi->line_buf));
@@ -70,20 +68,16 @@ static int auto_ngl(const char *path, int gpu, int n_ctx)
 		(total_b <= (8ULL << 30)) ? (800ULL << 20) : (1024ULL << 20);
 	size_t safety = 512ULL << 20;
 
-	if (free_b <= reserve + safety) {
-		fprintf(stderr, "Not enough free GPU memory to reserve/safety: %zu MiB\n", free_b >> 20);
-		return 0;
-	}
+	if (free_b <= reserve + safety)
+		ndclog_err("Not enough free GPU memory to reserve/safety\n");
 
 	size_t usable = free_b - reserve - safety;
 
 	struct gguf_init_params ip = { .no_alloc = true };
 	struct gguf_context *ctx = gguf_init_from_file(path, ip);
 
-	if (!ctx) {
-		fprintf(stderr, "Failed to load GGUF file: %s\n", path);
-		return 0;
-	}
+	if (!ctx)
+		ndclog_err("Failed to load GGUF file\n");
 
 	int n_layers = gguf_get_val_u32(ctx, gguf_find_key(ctx, "llama.block_count"));
 	int n_embd   = gguf_get_val_u32(ctx, gguf_find_key(ctx, "llama.embedding_length"));
@@ -92,8 +86,7 @@ static int auto_ngl(const char *path, int gpu, int n_ctx)
 	size_t *layer_sizes = calloc(n_layers, sizeof(*layer_sizes));
 	if (!layer_sizes) {
 		gguf_free(ctx);
-		fprintf(stderr, "Failed to allocate memory for layer sizes\n");
-		return 0;
+		ndclog_err("Failed to allocate memory for layer sizes\n");
 	}
 
 	size_t global = 0;
@@ -151,8 +144,8 @@ setup_model(const char *model_path)
 		int dev = 0;
 		cudaError_t err = cudaSetDevice(dev);
 		if (err != cudaSuccess) {
-			fprintf(stderr, "Failed to set CUDA device %d: %s\n", dev, cudaGetErrorString(err));
-			fprintf(stderr, "Disabling GPU offload.\n");
+			ndclog(LOG_ERR, "Failed to set CUDA device %d: %s\n", dev, cudaGetErrorString(err));
+			ndclog(LOG_ERR, "Disabling GPU offload.\n");
 			model_params.n_gpu_layers = 0;
 		} else {
 			model_params.n_gpu_layers = auto_ngl(model_path, dev, MAX_MEMORY);
@@ -164,10 +157,8 @@ setup_model(const char *model_path)
 	model = llama_model_load_from_file(
 			model_path, model_params);
 
-	if (!model) {
-		fprintf(stderr, "Failed to load model\n");
-		exit(1);
-	}
+	if (!model)
+		ndclog_err("Failed to load model\n");
 }
 
 inline static void
@@ -203,6 +194,7 @@ static void
 setup(const char *model_path)
 {
 	cudaDeviceReset();
+	llama_log_set(quiet_logger, NULL);
 	llama_backend_init();
 	setup_model(model_path);
 	setup_context();
@@ -243,7 +235,7 @@ memorize(fdi_t *fdi, size_t len) {
 	batch.logits[len - 1] = 1;
 
 	if (llama_decode(fdi->ctx, batch) != 0) {
-		fprintf(stderr, "Decode failed\n");
+		ndclog(LOG_ERR, "Decode failed\n");
 		return 0;
 	}
 
@@ -255,7 +247,7 @@ static inline void
 commit(int fd, fdi_t *fdi, const char *prompt) {
 	int n_tokens = tokenize(fd, prompt);
 	memorize(fdi, n_tokens);
-	/* fprintf(stderr, "commit: '%s'\n", prompt); */
+	/* ndclog(LOG_INFO, "commit: '%s'\n", prompt); */
 }
 
 void cmd_cb(
@@ -343,7 +335,7 @@ inference(int fd, fdi_t *fdi) {
 
 	size_t buflen = strlen(buf);
 	char *eoim = strchr(buf, *(end + fdi->end_pos));
-	/* fprintf(stderr, "tok mem '%s' eoim '%s' clen %lu\n", buf, eoim, buflen - (eoim - buf)); */
+	/* ndclog(LOG_ERR, "tok mem '%s' eoim '%s' clen %lu\n", buf, eoim, buflen - (eoim - buf)); */
 	if (eoim && (eoim - buf) <= end_len - fdi->end_pos) {
 		size_t clen = buflen - (eoim - buf);
 
@@ -523,10 +515,8 @@ main(int argc, char *argv[])
 		snprintf(cmd, sizeof(cmd),
 				"llm-path %s", arg_model);
 		fp = popen(cmd, "r");
-		if (!fp || !fgets(model_path, sizeof(model_path), fp)) {
-			fprintf(stderr, "Couldn't resolve model\n");
-			exit(1);
-		}
+		if (!fp || !fgets(model_path, sizeof(model_path), fp))
+			ndclog_err("Couldn't resolve model\n");
 		pclose(fp);
 
 		char *nl = strchr(model_path, '\n');
