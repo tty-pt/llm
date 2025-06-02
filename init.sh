@@ -5,8 +5,8 @@ dir="$PWD"
 npm i
 make
 . ./source.sh
-python3 -m venv .venv
-./.venv/bin/pip install -r llama.cpp/requirements.txt
+conda env create -f environment.yaml
+conda activate axo
 cd llama.cpp
 mkdir build
 cd build

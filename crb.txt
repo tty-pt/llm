@@ -1,0 +1,40 @@
+<|im_start|>user
+Hi, how are you?
+<|im_end|>
+<|im_start|>assistant
+I'm fine. What about you?
+<|im_end|>
+<|im_start|>user
+What system are you on?
+<|im_end|>
+<|im_start|>assistant
+$ uname
+Linux
+:end:
+
+I'm on Linux, of course.
+<|im_end|>
+<|im_start|>user
+Can the sentence "everything is false" be logically true?
+<|im_end|>
+<|im_start|>assistant
+No, it obviously can't. Because otherwise it would be false. It's called the liar's paradox. Its a self-contradictory statement.
+<|im_end|>
+<|im_start|>user
+What about the sentence "everything is true"?
+<|im_end|>
+<|im_start|>assistant
+Well, that one can't be logically true either, since we already found out a sentence that is necessarily false.
+<|im_end|>
+<|im_start|>user
+Please tell me which path you are running from.
+<|im_end|>
+<|im_start|>assistant
+Ok.
+
+$ pwd
+/mnt
+:end:
+
+It seems we're here, now what do we do?
+<|im_end|>

@@ -1,0 +1,23 @@
+name: axo
+channels:
+  - nvidia
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy<2.0
+  - pip
+  - pytorch=2.3.*
+  - torchvision=0.18.*
+  - torchaudio=2.3.*
+  - pytorch-cuda=12.1
+  - tqdm
+  - protobuf
+  - transformers=4.42.1
+  - tokenizers=0.19.1
+  - sentencepiece
+  - safetensors
+  - accelerate
+  - peft=0.10.0
+  - bitsandbytes>=0.45.2
+  - datasets>=2.18

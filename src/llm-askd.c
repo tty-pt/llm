@@ -15,7 +15,7 @@
 #include <cuda_runtime.h>
 #endif
 
-#define MAX_TOKENS 256
+#define MAX_TOKENS 1024
 #define MAX_MEMORY (MAX_TOKENS * 10)
 #define MAX_TOKEN_LEN 64
 #define DEFAULT_SEQ_MAX 4
@@ -34,6 +34,9 @@ const char *start = "<|im_start|>";
 const char *end = "<|im_end|>";
 const unsigned end_len = 10;
 
+size_t crb_len = 0;
+char *crb = NULL;
+
 typedef struct fd_info {
 	char line_buf[BUFSIZ * 4];
 	struct llama_context *ctx;
@@ -46,6 +49,51 @@ void quiet_logger(enum ggml_log_level level __attribute__((unused)), const char 
 	// Do nothing
 }
 
+static inline int
+tokenize(const char *prompt) {
+	int n_tokens = llama_tokenize(vocab, prompt, strlen(prompt), tokens, MAX_TOKENS, true, true);
+
+	if (n_tokens < 1)
+		ndclog(LOG_ERR, "Tokenization failed\n");
+
+	return n_tokens;
+}
+
+static inline int
+memorize(fdi_t *fdi, size_t len) {
+	unsigned pos = fdi->pos;
+	int excess = pos + len - MAX_MEMORY;
+	if (excess > 0)
+		pos -= excess;
+
+	struct llama_batch batch = llama_batch_init(len, 0, 1);
+	batch.n_tokens = len;
+
+	for (register size_t i = 0; i < len; ++i) {
+		batch.token[i] = tokens[i];
+		batch.pos[i] = pos + i;
+		batch.n_seq_id[i] = 1;
+		batch.seq_id[i] = &seq_ids[i];
+		batch.seq_id[i][0] = 0;
+	}
+	batch.logits[len - 1] = 1;
+
+	if (llama_decode(fdi->ctx, batch) != 0) {
+		ndclog(LOG_ERR, "Decode failed\n");
+		return 0;
+	}
+
+	fdi->pos += len;
+	return len;
+}
+
+static inline void
+commit(fdi_t *fdi, const char *prompt) {
+	int n_tokens = tokenize(prompt);
+	memorize(fdi, n_tokens);
+	/* ndclog(LOG_INFO, "commit: '%s'\n", prompt); */
+}
+
 static inline void
 fdi_init(fdi_t *fdi) {
 	struct llama_context *ctx =
@@ -56,6 +104,8 @@ fdi_init(fdi_t *fdi) {
 	llama_kv_self_clear(fdi->ctx);
 	fdi->line_pos = fdi->end_pos = fdi->pos = 0;
 	memset(fdi->line_buf, 0, sizeof(fdi->line_buf));
+	if (crb)
+		commit(fdi, crb);
 }
 
 #if CONFIG_CUDA
@@ -201,53 +251,7 @@ setup(const char *model_path)
 	fdi_init(&general);
 	vocab = llama_model_get_vocab(model);
 	setup_sampler();
-}
-
-static inline int
-tokenize(int fd, const char *prompt) {
-	int n_tokens = llama_tokenize(vocab, prompt, strlen(prompt), tokens, MAX_TOKENS, true, true);
-
-	if (n_tokens < 1) {
-		ndc_writef(fd, "Tokenization failed\n");
-		exit(1);
-	}
-
-	return n_tokens;
-}
-
-static inline int
-memorize(fdi_t *fdi, size_t len) {
-	unsigned pos = fdi->pos;
-	int excess = pos + len - MAX_MEMORY;
-	if (excess > 0)
-		pos -= excess;
-
-	struct llama_batch batch = llama_batch_init(len, 0, 1);
-	batch.n_tokens = len;
-
-	for (register size_t i = 0; i < len; ++i) {
-		batch.token[i] = tokens[i];
-		batch.pos[i] = pos + i;
-		batch.n_seq_id[i] = 1;
-		batch.seq_id[i] = &seq_ids[i];
-		batch.seq_id[i][0] = 0;
-	}
-	batch.logits[len - 1] = 1;
-
-	if (llama_decode(fdi->ctx, batch) != 0) {
-		ndclog(LOG_ERR, "Decode failed\n");
-		return 0;
-	}
-
-	fdi->pos += len;
-	return len;
-}
-
-static inline void
-commit(int fd, fdi_t *fdi, const char *prompt) {
-	int n_tokens = tokenize(fd, prompt);
-	memorize(fdi, n_tokens);
-	/* ndclog(LOG_INFO, "commit: '%s'\n", prompt); */
+	crb_len = (size_t) ndc_mmap(&crb, "crb.txt");
 }
 
 void cmd_cb(
@@ -258,7 +262,7 @@ void cmd_cb(
 {
 	fdi_t *fdi = &fdis[fd];
 	ndc_write(fd, buf, len);
-	commit(fd, fdi, buf);
+	commit(fdi, buf);
 }
 
 static inline void
@@ -293,7 +297,9 @@ cmd_exec(int fd, fdi_t *fdi) {
 		*space = '\0';
 
 	ndc_exec(fd, args, cmd_cb, NULL, 0);
-	commit(fd, fdi, ndc_execbuf);
+	commit(fdi, ndc_execbuf);
+	ndc_write(fd, "\n", 1);
+	commit(fdi, ":end:\n\n");
 }
 
 static inline int
@@ -371,7 +377,7 @@ void generate(int fd, const char * prompt) {
 	fdi_t *fdi = &fdis[fd];
 	int max_gen = MAX_TOKENS;
 
-	commit(fd, fdi, prompt);
+	commit(fdi, prompt);
 
 	fdi->line_pos = 0;
 	for (
@@ -386,6 +392,7 @@ void generate(int fd, const char * prompt) {
 }
 
 void do_ASK(int fd, int argc, char *argv[]) {
+	fdi_t *fdi = &fdis[fd];
 	char buf[BUFSIZ * 2], *b = buf;
 	b += snprintf(b, sizeof(buf) - (b - buf), "%suser\n", start);
 	for (int i = 1; i < argc; i++) {
@@ -399,6 +406,8 @@ void do_ASK(int fd, int argc, char *argv[]) {
 	b += snprintf(b, sizeof(buf) - (b - buf), "%s\n%sassistant\n ", end, start);
 	generate(fd, buf);
 	ndc_writef(fd, "%s\n", end);
+	/* if (crb) */
+	/* 	commit(fdi, crb); */
 }
 
 void do_CHAT(int fd, int argc __attribute__((unused)), char *argv[] __attribute__((unused))) {
