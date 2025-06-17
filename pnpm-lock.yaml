@@ -9,24 +9,25 @@ importers:
   .:
     dependencies:
       '@tty-pt/mk':
-        specifier: ^0.0.1
-        version: 0.0.1
+        specifier: ^0.0.13
+        version: 0.0.13
       '@tty-pt/ndc':
-        specifier: ^0.9.9
-        version: 0.9.9(@tty-pt/qdb@0.0.14)(@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0))(@xterm/addon-web-links@0.11.0(@xterm/xterm@5.5.0))(@xterm/xterm@5.5.0)
+        specifier: ^0.10.0
+        version: 0.10.0(@tty-pt/mk@0.0.13)(@tty-pt/qdb@0.0.14)(@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0))(@xterm/addon-web-links@0.11.0(@xterm/xterm@5.5.0))(@xterm/xterm@5.5.0)
       '@tty-pt/qdb':
         specifier: ^0.0.14
         version: 0.0.14
 
 packages:
 
-  '@tty-pt/mk@0.0.1':
-    resolution: {integrity: sha512-0mttCm5t4LmSmmh1AJL09011iLvodGycIJzYy1KM6XNSjKZWVlqlkm/caT6c2eoXZok6EkATGH8L/Y3bMrBrTQ==}
+  '@tty-pt/mk@0.0.13':
+    resolution: {integrity: sha512-2buJa+LXGgJsSttlRA5YMa2h7KUdZXPumZXCQn/YK7q8vMGHgPlE3G2XSbvEkOGxVoJrjmP9ctmJCD6SBxCCqw==}
 
-  '@tty-pt/ndc@0.9.9':
-    resolution: {integrity: sha512-KRuHa8TPEH79EIFDJL/OYKS6oZWrpWyB6e9FN7FnHfQavlaDyJW/OrQ9Eei8er4iPDecjWszgN3dVD9XB6RJZw==}
+  '@tty-pt/ndc@0.10.0':
+    resolution: {integrity: sha512-8Sk7RvP/HcVrunGBoIImkr8xr5vQhski1wh61s7suglC03LwOe4G5tFuLK3pX2SKqhZCxm/Yr62YqMTE5n0+nA==}
     hasBin: true
     peerDependencies:
+      '@tty-pt/mk': ^0.0.13
       '@tty-pt/qdb': ^0.0.14
       '@xterm/addon-fit': ^0.10.0
       '@xterm/addon-web-links': ^0.11.0
@@ -50,11 +51,11 @@ packages:
 
 snapshots:
 
-  '@tty-pt/mk@0.0.1': {}
+  '@tty-pt/mk@0.0.13': {}
 
-  '@tty-pt/ndc@0.9.9(@tty-pt/qdb@0.0.14)(@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0))(@xterm/addon-web-links@0.11.0(@xterm/xterm@5.5.0))(@xterm/xterm@5.5.0)':
+  '@tty-pt/ndc@0.10.0(@tty-pt/mk@0.0.13)(@tty-pt/qdb@0.0.14)(@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0))(@xterm/addon-web-links@0.11.0(@xterm/xterm@5.5.0))(@xterm/xterm@5.5.0)':
     dependencies:
-      '@tty-pt/mk': 0.0.1
+      '@tty-pt/mk': 0.0.13
       '@tty-pt/qdb': 0.0.14
       '@xterm/addon-fit': 0.10.0(@xterm/xterm@5.5.0)
       '@xterm/addon-web-links': 0.11.0(@xterm/xterm@5.5.0)

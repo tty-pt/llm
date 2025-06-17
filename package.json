@@ -11,8 +11,8 @@
   "license": "BSD-2-Clause",
   "packageManager": "pnpm@10.11.0",
   "dependencies": {
-    "@tty-pt/mk": "^0.0.1",
-    "@tty-pt/ndc": "^0.9.9",
+    "@tty-pt/mk": "^0.0.13",
+    "@tty-pt/ndc": "^0.10.0",
     "@tty-pt/qdb": "^0.0.14"
   }
 }

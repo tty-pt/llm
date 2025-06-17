@@ -218,7 +218,7 @@ setup_context(void)
 	ctx_params.n_ctx = MAX_MEMORY;
 	ctx_params.n_batch = MAX_TOKENS;
 	ctx_params.n_seq_max = DEFAULT_SEQ_MAX;
-	ctx_params.n_threads = sysconf(_SC_NPROCESSORS_ONLN) >> 2;
+	ctx_params.n_threads = sysconf(_SC_NPROCESSORS_ONLN) >> 1;
 
 #if CONFIG_CUDA
 	if (llama_supports_gpu_offload()) {
@@ -243,7 +243,9 @@ setup_sampler(void)
 static void
 setup(const char *model_path)
 {
+#if CONFIG_CUDA
 	cudaDeviceReset();
+#endif
 	llama_log_set(quiet_logger, NULL);
 	llama_backend_init();
 	setup_model(model_path);
